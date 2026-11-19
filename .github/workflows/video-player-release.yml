@@ -47,8 +47,16 @@ jobs:
           Copy-Item ffmpeg-tmp/*/LICENSE.txt vendor/ffmpeg/
           Remove-Item -Recurse -Force ffmpeg.zip, ffmpeg-tmp
 
+      # Chocolatey 서버가 가끔 503을 내므로 몇 번 다시 시도한다.
       - name: Install NSIS
-        run: choco install nsis -y --no-progress
+        shell: pwsh
+        run: |
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          for ($i = 1; $i -le 5 -and -not (Test-Path $makensis); $i++) {
+            choco install nsis -y --no-progress
+            if (-not (Test-Path $makensis)) { Start-Sleep -Seconds 20 }
+          }
+          if (-not (Test-Path $makensis)) { throw 'NSIS 설치 실패' }
 
       - name: Build installer
         run: npm run dist
