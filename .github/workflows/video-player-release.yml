@@ -1,10 +1,17 @@
 name: Video player release
 
 # video-player-v* 태그가 올라오면 Windows에서 설치 파일을 빌드해 그 태그의 릴리스에 첨부한다.
+# 플레이어 소스가 바뀌어 푸시되면 설치 파일을 빌드해 실행 결과(Artifacts)에 올린다.
 on:
   push:
     tags:
       - 'video-player-v*'
+    branches:
+      - main
+      - claude/video-player
+    paths:
+      - 'video-player/**'
+      - '.github/workflows/video-player-release.yml'
   workflow_dispatch:
 
 permissions:
