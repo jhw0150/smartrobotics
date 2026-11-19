@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>동영상 플레이어</title>
+<style>
+  :root {
+    --bg: #0f1114;
+    --panel: #181b20;
+    --line: #2a2f37;
+    --text: #e8eaed;
+    --muted: #9aa1ab;
+    --accent: #4da3ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+    display: flex; flex-direction: column;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  header {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; font-weight: 600; }
+  .btn {
+    padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: #20242b;
+  }
+  .btn:hover { background: #2a2f37; }
+  #urlForm { display: flex; gap: 6px; flex: 1 1 220px; min-width: 0; }
+  #urlInput {
+    flex: 1; min-width: 0; padding: 6px 10px; border-radius: 6px;
+    border: 1px solid var(--line); background: #0f1114; color: var(--text); font: inherit;
+  }
+
+  main { flex: 1; min-height: 0; display: flex; }
+  #stage {
+    position: relative; flex: 1; min-width: 0; background: #000;
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+  }
+  #stage.hide-ui { cursor: none; }
+  video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+  video::cue { font-size: 1.1em; background: rgba(0,0,0,.6); }
+
+  #empty {
+    position: absolute; inset: 0; display: flex; flex-direction: column; gap: 6px;
+    align-items: center; justify-content: center; text-align: center; color: var(--muted);
+    padding: 16px; pointer-events: none;
+  }
+  #empty strong { color: var(--text); font-size: 17px; }
+  #stage.has-video #empty { display: none; }
+  #stage.dragover::after {
+    content: "여기에 놓으세요"; position: absolute; inset: 12px; border: 2px dashed var(--accent);
+    border-radius: 10px; display: flex; align-items: center; justify-content: center;
+    background: rgba(77,163,255,.12); font-size: 18px; pointer-events: none;
+  }
+
+  #toast {
+    position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,.75); padding: 6px 14px; border-radius: 16px;
+    opacity: 0; transition: opacity .2s; pointer-events: none; white-space: nowrap;
+  }
+  #toast.show { opacity: 1; }
+
+  #controls {
+    position: absolute; left: 0; right: 0; bottom: 0; padding: 26px 12px 8px;
+    background: linear-gradient(transparent, rgba(0,0,0,.85));
+    transition: opacity .25s;
+  }
+  #stage.hide-ui #controls { opacity: 0; pointer-events: none; }
+  #stage:not(.has-video) #controls { display: none; }
+
+  #seekWrap { position: relative; height: 16px; display: flex; align-items: center; }
+  #seekTrack { position: absolute; left: 0; right: 0; height: 4px; border-radius: 2px; background: rgba(255,255,255,.25); overflow: hidden; }
+  #buffered, #played { position: absolute; top: 0; bottom: 0; left: 0; width: 0; }
+  #buffered { background: rgba(255,255,255,.35); }
+  #played { background: var(--accent); }
+  #seek {
+    position: relative; width: 100%; margin: 0; height: 16px; background: transparent;
+    -webkit-appearance: none; appearance: none; cursor: pointer;
+  }
+  #seek::-webkit-slider-runnable-track { background: transparent; height: 16px; }
+  #seek::-moz-range-track { background: transparent; height: 16px; }
+  #seek::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); margin-top: 2px; }
+  #seek::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 50%; background: var(--accent); }
+  #seekTip {
+    position: absolute; bottom: 20px; transform: translateX(-50%); background: rgba(0,0,0,.85);
+    padding: 2px 6px; border-radius: 4px; font-size: 12px; display: none; pointer-events: none;
+    font-variant-numeric: tabular-nums;
+  }
+
+  #bar { display: flex; align-items: center; gap: 4px; margin-top: 2px; flex-wrap: wrap; }
+  .ic { width: 36px; height: 36px; border-radius: 6px; display: grid; place-items: center; }
+  .ic:hover { background: rgba(255,255,255,.14); }
+  .ic svg { width: 20px; height: 20px; fill: currentColor; }
+  .ic[aria-pressed="true"] { color: var(--accent); }
+  #time { margin: 0 8px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #volume { width: 80px; accent-color: var(--accent); }
+  .spacer { flex: 1; }
+  #speed {
+    background: transparent; color: var(--text); border: 1px solid rgba(255,255,255,.3);
+    border-radius: 6px; padding: 4px 6px; font: inherit;
+  }
+  #speed option { background: #181b20; }
+
+  aside {
+    width: 280px; flex: none; background: var(--panel); border-left: 1px solid var(--line);
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  aside.closed { display: none; }
+  aside h2 { font-size: 13px; margin: 0; padding: 10px 12px; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line); }
+  #list { list-style: none; margin: 0; padding: 4px; overflow-y: auto; flex: 1; }
+  #list li { display: flex; align-items: center; border-radius: 6px; }
+  #list li:hover { background: #20242b; }
+  #list li.active { background: #233247; }
+  #list .item { flex: 1; min-width: 0; text-align: left; padding: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #list .del { padding: 8px 10px; color: var(--muted); }
+  #list .del:hover { color: #ff7b7b; }
+  #listEmpty { padding: 16px 12px; color: var(--muted); }
+  #help { padding: 10px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+  kbd { background: #2a2f37; border-radius: 3px; padding: 0 4px; font: inherit; color: var(--text); }
+
+  @media (max-width: 760px) {
+    main { flex-direction: column; }
+    aside { width: auto; max-height: 40%; border-left: 0; border-top: 1px solid var(--line); }
+    #help { display: none; }
+    #volume { width: 56px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>동영상 플레이어</h1>
+  <button class="btn" id="openBtn">파일 열기</button>
+  <button class="btn" id="subBtn" title="자막 파일(.srt, .vtt) 불러오기">자막 열기</button>
+  <form id="urlForm">
+    <input id="urlInput" type="url" placeholder="동영상 주소(URL) 붙여넣기" aria-label="동영상 주소">
+    <button class="btn" type="submit">재생</button>
+  </form>
+  <button class="btn" id="listBtn" aria-pressed="true">재생목록</button>
+  <input id="fileInput" type="file" accept="video/*,audio/*,.mkv,.avi,.wmv,.flv,.ts,.m2ts,.mpg,.mpeg,.vob,.rmvb,.srt,.vtt" multiple hidden>
+  <input id="subInput" type="file" accept=".srt,.vtt" hidden>
+</header>
+
+<main>
+  <div id="stage" tabindex="0">
+    <video id="video" playsinline></video>
+    <div id="empty">
+      <strong>동영상 파일을 여기로 끌어다 놓으세요</strong>
+      <span>또는 위의 "파일 열기"를 누르세요. 자막(.srt, .vtt)도 함께 놓을 수 있습니다.</span>
+    </div>
+    <div id="toast" role="status"></div>
+
+    <div id="controls">
+      <div id="seekWrap">
+        <div id="seekTrack"><div id="buffered"></div><div id="played"></div></div>
+        <input id="seek" type="range" min="0" max="1000" value="0" step="1" aria-label="재생 위치">
+        <div id="seekTip"></div>
+      </div>
+      <div id="bar">
+        <button class="ic" id="prevBtn" title="이전 (Shift+P)" aria-label="이전"><svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
+        <button class="ic" id="playBtn" title="재생/일시정지 (Space)" aria-label="재생"><svg viewBox="0 0 24 24"><path id="playIcon" d="M7 4v16l13-8z"/></svg></button>
+        <button class="ic" id="nextBtn" title="다음 (Shift+N)" aria-label="다음"><svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
+        <button class="ic" id="muteBtn" title="음소거 (M)" aria-label="음소거"><svg viewBox="0 0 24 24"><path id="volIcon" d="M4 9v6h4l5 5V4L8 9H4zm12.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg></button>
+        <input id="volume" type="range" min="0" max="1" step="0.01" value="1" aria-label="음량">
+        <span id="time">0:00 / 0:00</span>
+        <span class="spacer"></span>
+        <select id="speed" title="재생 속도" aria-label="재생 속도">
+          <option value="0.25">0.25x</option><option value="0.5">0.5x</option><option value="0.75">0.75x</option>
+          <option value="1" selected>1x</option><option value="1.25">1.25x</option><option value="1.5">1.5x</option>
+          <option value="2">2x</option><option value="3">3x</option>
+        </select>
+        <button class="ic" id="loopBtn" title="반복 (L)" aria-label="반복" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg></button>
+        <button class="ic" id="ccBtn" title="자막 켜기/끄기 (C)" aria-label="자막" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M19 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1z"/></svg></button>
+        <button class="ic" id="pipBtn" title="화면 속 화면 (I)" aria-label="화면 속 화면"><svg viewBox="0 0 24 24"><path d="M19 11h-8v6h8v-6zm4 8V5a2 2 0 0 0-2-2H3a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2zm-2 0H3V5h18v14z"/></svg></button>
+        <button class="ic" id="fsBtn" title="전체 화면 (F)" aria-label="전체 화면"><svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg></button>
+      </div>
+    </div>
+  </div>
+
+  <aside id="side">
+    <h2>재생목록</h2>
+    <ul id="list"></ul>
+    <div id="listEmpty">목록이 비어 있습니다.</div>
+    <div id="help">
+      <kbd>Space</kbd> 재생/정지 · <kbd>←</kbd><kbd>→</kbd> 5초 · <kbd>J</kbd><kbd>;</kbd> 10초<br>
+      <kbd>↑</kbd><kbd>↓</kbd> 음량 · <kbd>M</kbd> 음소거 · <kbd>F</kbd> 전체 화면<br>
+      <kbd>[</kbd><kbd>]</kbd> 속도 · <kbd>0</kbd>–<kbd>9</kbd> 위치 이동 · <kbd>,</kbd><kbd>.</kbd> 프레임
+    </div>
+  </aside>
+</main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const video = $('video'), stage = $('stage'), seek = $('seek'), list = $('list');
+  const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3];
+  const ICON = {
+    play: 'M7 4v16l13-8z',
+    pause: 'M6 4h4v16H6zM14 4h4v16h-4z',
+    vol: 'M4 9v6h4l5 5V4L8 9H4zm12.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z',
+    mute: 'M4 9v6h4l5 5V4L8 9H4zm17.6.4-1.4-1.4-2.6 2.6L15 8l-1.4 1.4 2.6 2.6-2.6 2.6L15 16l2.6-2.6 2.6 2.6 1.4-1.4-2.6-2.6z',
+  };
+
+  /** @type {{name:string, url:string, isBlob:boolean, sub?:{name:string,text:string}}[]} */
+  const items = [];
+  let current = -1;
+  let subUrl = null;
+  let seeking = false;
+  let subsOn = true, loopOn = false;
+  // 변환 재생(FFmpeg 스트림) 상태. 스트림은 탐색 위치부터 새로 시작하므로 offset을 더해 실제 시간을 구한다.
+  /** @type {{base:string, duration:number, offset:number}|null} */
+  let tc = null;
+  const cur = () => tc ? tc.offset + video.currentTime : video.currentTime;
+  const dur = () => tc ? tc.duration : video.duration;
+  const hasDur = () => isFinite(dur()) && dur() > 0;
+
+  function seekTo(t) {
+    if (!hasDur()) return;
+    t = Math.min(Math.max(t, 0), dur());
+    if (!tc) { video.currentTime = t; return; }
+    const wasPaused = video.paused && !video.ended;
+    tc.offset = Math.min(t, Math.max(tc.duration - 0.5, 0));
+    video.src = tc.base + '?ss=' + tc.offset.toFixed(2);
+    video.playbackRate = Number($('speed').value);
+    const it = items[current];
+    if (it && it.sub) applySubtitle(it.sub.name, it.sub.text, false);
+    if (!wasPaused) video.play().catch(() => {});
+    updateTime();
+  }
+  let hideTimer = 0, toastTimer = 0;
+
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem('vp.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem('vp.' + k, JSON.stringify(v)); } catch {} },
+  };
+
+  function fmt(t) {
+    if (!isFinite(t) || t < 0) t = 0;
+    const s = Math.floor(t % 60), m = Math.floor(t / 60) % 60, h = Math.floor(t / 3600);
+    const ss = String(s).padStart(2, '0');
+    return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+  }
+
+  function toast(msg) {
+    const el = $('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 1200);
+  }
+
+  // ---------- 재생목록 ----------
+  function renderList() {
+    list.textContent = '';
+    items.forEach((it, i) => {
+      const li = document.createElement('li');
+      if (i === current) li.className = 'active';
+      const b = document.createElement('button');
+      b.className = 'item'; b.textContent = it.name; b.title = it.name;
+      b.onclick = () => playIndex(i);
+      const d = document.createElement('button');
+      d.className = 'del'; d.textContent = '✕'; d.setAttribute('aria-label', it.name + ' 삭제');
+      d.onclick = () => removeIndex(i);
+      li.append(b, d);
+      list.append(li);
+    });
+    $('listEmpty').style.display = items.length ? 'none' : '';
+  }
+
+  function addItems(newItems, autoplay = true) {
+    if (!newItems.length) return;
+    const first = items.length;
+    items.push(...newItems);
+    renderList();
+    if (autoplay && (current < 0 || video.ended || video.paused)) playIndex(first);
+  }
+
+  function playIndex(i) {
+    if (i < 0 || i >= items.length) return;
+    current = i;
+    const it = items[i];
+    clearSubtitles();
+    tc = it.stream ? { base: it.streamBase, duration: it.duration, offset: 0 } : null;
+    video.loop = loopOn && !tc;
+    video.src = tc ? tc.base + '?ss=0' : it.url;
+    video.playbackRate = Number($('speed').value);
+    if (!it.sub && it.hasTextSub && !it.subAsked && window.native) {
+      it.subAsked = true;
+      window.native.embeddedSub(it.id).then(sub => {
+        if (!sub || it.sub) return;
+        it.sub = sub;
+        if (items[current] === it) applySubtitle(sub.name, sub.text, false);
+      });
+    }
+    stage.classList.add('has-video');
+    document.title = items[i].name + ' - 동영상 플레이어';
+    renderList();
+    if (items[i].sub) applySubtitle(items[i].sub.name, items[i].sub.text, false);
+    video.play().catch(() => {});
+  }
+
+  function removeIndex(i) {
+    const [it] = items.splice(i, 1);
+    if (it.isBlob) URL.revokeObjectURL(it.url);
+    if (i === current) {
+      current = -1;
+      if (items.length) playIndex(Math.min(i, items.length - 1));
+      else {
+        video.removeAttribute('src'); video.load();
+        stage.classList.remove('has-video');
+        document.title = '동영상 플레이어';
+      }
+    } else if (i < current) current--;
+    renderList();
+  }
+
+  const step = d => { if (items.length) playIndex((current + d + items.length) % items.length); };
+
+  // ---------- 파일 / 자막 ----------
+  const isSub = f => /\.(srt|vtt)$/i.test(f.name);
+
+  async function loadFiles(fileList) {
+    const files = [...fileList];
+    const media = files.filter(f => !isSub(f))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    const sub = files.find(isSub);
+    if (window.native && media.length) {
+      // 설치형 앱: 실제 경로로 열어야 코덱 변환과 자막 자동 찾기가 동작한다.
+      openNative(await window.native.describe(media.map(f => window.native.pathFor(f))));
+    } else {
+      addItems(media.map(f => ({ name: f.name, url: URL.createObjectURL(f), isBlob: true })));
+    }
+    if (sub) loadSubtitle(sub);
+    if (!media.length && !sub) toast('재생할 수 있는 파일이 없습니다');
+  }
+
+  function srtToVtt(text) {
+    return 'WEBVTT\n\n' + text.replace(/^\uFEFF/, '').replace(/\r/g, '')
+      .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
+  }
+
+  function clearSubtitles() {
+    video.querySelectorAll('track').forEach(t => t.remove());
+    if (subUrl) { URL.revokeObjectURL(subUrl); subUrl = null; }
+    $('ccBtn').setAttribute('aria-pressed', 'false');
+  }
+
+  // 한국어 자막은 UTF-8이 아닌 CP949(EUC-KR)인 경우가 많다.
+  function decodeText(buf) {
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+    catch { return new TextDecoder('euc-kr').decode(buf); }
+  }
+
+  async function loadSubtitle(file) {
+    if (current < 0) { toast('먼저 동영상을 여세요'); return; }
+    const sub = { name: file.name, text: decodeText(await file.arrayBuffer()) };
+    items[current].sub = sub;
+    applySubtitle(sub.name, sub.text, true);
+  }
+
+  // 변환 재생 중에는 영상 시간이 0부터 다시 시작하므로 자막 시간을 offset만큼 당긴다.
+  function shiftVtt(text, offset) {
+    const sec = (h, m, s) => (h ? parseInt(h) * 3600 : 0) + m * 60 + Number(s);
+    const out = t => {
+      t = Math.max(t - offset, 0);
+      const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = (t % 60).toFixed(3).padStart(6, '0');
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${s}`;
+    };
+    return text.replace(/^((\d+):)?(\d{2}):(\d{2}\.\d{3})(\s+-->\s+)((\d+):)?(\d{2}):(\d{2}\.\d{3})/gm,
+      (_m, _a, h1, m1, s1, arrow, _b, h2, m2, s2) => out(sec(h1, m1, s1)) + arrow + out(sec(h2, m2, s2)));
+  }
+
+  function applySubtitle(name, text, announce) {
+    if (!/^\uFEFF?WEBVTT/.test(text)) text = srtToVtt(text);
+    if (tc && tc.offset > 0) text = shiftVtt(text, tc.offset);
+    clearSubtitles();
+    subUrl = URL.createObjectURL(new Blob([text], { type: 'text/vtt' }));
+    const track = document.createElement('track');
+    track.kind = 'subtitles'; track.label = name; track.srclang = 'ko';
+    track.src = subUrl; track.default = true;
+    video.append(track);
+    track.track.mode = subsOn ? 'showing' : 'hidden';
+    $('ccBtn').setAttribute('aria-pressed', String(subsOn));
+    if (announce) toast('자막: ' + name);
+  }
+
+  function toggleSubs() {
+    const t = video.textTracks[0];
+    if (!t) { toast('불러온 자막이 없습니다'); return; }
+    const on = subsOn = t.mode !== 'showing';
+    t.mode = on ? 'showing' : 'hidden';
+    $('ccBtn').setAttribute('aria-pressed', String(on));
+    toast(on ? '자막 켬' : '자막 끔');
+  }
+
+  // ---------- 재생 제어 ----------
+  const toggle = () => { if (current >= 0) video.paused ? video.play().catch(() => {}) : video.pause(); };
+  function skip(sec) {
+    if (!hasDur()) return;
+    seekTo(cur() + sec);
+    toast((sec > 0 ? '+' : '') + sec + '초');
+  }
+  function setVolume(v) {
+    video.volume = Math.min(Math.max(v, 0), 1);
+    video.muted = false;
+    toast('음량 ' + Math.round(video.volume * 100) + '%');
+  }
+  function setSpeed(v) {
+    video.playbackRate = v;
+    $('speed').value = String(v);
+    store.set('speed', v);
+    toast('속도 ' + v + 'x');
+  }
+  function stepSpeed(d) {
+    const i = SPEEDS.indexOf(Number($('speed').value));
+    setSpeed(SPEEDS[Math.min(Math.max(i + d, 0), SPEEDS.length - 1)]);
+  }
+  function toggleLoop() {
+    loopOn = !loopOn;
+    video.loop = loopOn && !tc;
+    $('loopBtn').setAttribute('aria-pressed', String(loopOn));
+    toast(loopOn ? '반복 켬' : '반복 끔');
+  }
+  function toggleFullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else stage.requestFullscreen?.().catch(() => {});
+  }
+  async function togglePip() {
+    try {
+      if (document.pictureInPictureElement) await document.exitPictureInPicture();
+      else if (current >= 0 && document.pictureInPictureEnabled) await video.requestPictureInPicture();
+      else toast('화면 속 화면을 사용할 수 없습니다');
+    } catch { toast('화면 속 화면을 사용할 수 없습니다'); }
+  }
+
+  // ---------- 화면 갱신 ----------
+  function updateTime() {
+    const d = dur(), t = Math.min(cur(), isFinite(dur()) ? dur() : Infinity);
+    $('time').textContent = fmt(t) + ' / ' + fmt(d);
+    if (isFinite(d) && d > 0) {
+      if (!seeking) seek.value = String(Math.round(t / d * 1000));
+      $('played').style.width = (seeking ? seek.value / 10 : t / d * 100) + '%';
+    }
+  }
+  function updateBuffered() {
+    const d = dur(), b = video.buffered;
+    if (!hasDur() || !b.length) return;
+    let end = 0;
+    for (let i = 0; i < b.length; i++) if (b.start(i) <= video.currentTime + 0.5) end = Math.max(end, b.end(i));
+    $('buffered').style.width = Math.min(((tc ? tc.offset : 0) + end) / d * 100, 100) + '%';
+  }
+  function updatePlayIcon() {
+    $('playIcon').setAttribute('d', video.paused ? ICON.play : ICON.pause);
+    $('playBtn').setAttribute('aria-label', video.paused ? '재생' : '일시정지');
+  }
+  function updateVolumeUi() {
+    const silent = video.muted || video.volume === 0;
+    $('volIcon').setAttribute('d', silent ? ICON.mute : ICON.vol);
+    $('volume').value = String(video.muted ? 0 : video.volume);
+    store.set('volume', video.volume);
+    store.set('muted', video.muted);
+  }
+  function wakeUi() {
+    stage.classList.remove('hide-ui');
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      if (!video.paused && !seeking && !$('controls').matches(':hover')) stage.classList.add('hide-ui');
+    }, 2500);
+  }
+
+  // ---------- 이벤트 ----------
+  video.addEventListener('timeupdate', updateTime);
+  video.addEventListener('durationchange', updateTime);
+  video.addEventListener('progress', updateBuffered);
+  video.addEventListener('play', () => { updatePlayIcon(); wakeUi(); });
+  video.addEventListener('pause', () => { updatePlayIcon(); wakeUi(); });
+  video.addEventListener('volumechange', updateVolumeUi);
+  video.addEventListener('ended', () => {
+    if (tc && loopOn) seekTo(0);
+    else if (current < items.length - 1) step(1);
+  });
+  video.addEventListener('error', () => {
+    if (current < 0 || !video.error) return;
+    const it = items[current];
+    if (it.canStream && !it.stream) {
+      // 내장 엔진이 못 여는 코덱이면 FFmpeg 변환 재생으로 넘어간다.
+      it.stream = true;
+      playIndex(current);
+    } else toast('이 파일은 재생할 수 없습니다 (지원하지 않는 형식)');
+  });
+  video.addEventListener('click', toggle);
+  video.addEventListener('dblclick', toggleFullscreen);
+
+  seek.addEventListener('input', () => {
+    seeking = true;
+    $('played').style.width = seek.value / 10 + '%';
+    if (hasDur()) $('time').textContent = fmt(seek.value / 1000 * dur()) + ' / ' + fmt(dur());
+  });
+  seek.addEventListener('change', () => {
+    seeking = false;
+    seekTo(seek.value / 1000 * dur());
+  });
+  $('seekWrap').addEventListener('mousemove', e => {
+    if (!hasDur()) return;
+    const r = seek.getBoundingClientRect();
+    const p = Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1);
+    const tip = $('seekTip');
+    tip.textContent = fmt(p * dur());
+    tip.style.left = p * r.width + 'px';
+    tip.style.display = 'block';
+  });
+  $('seekWrap').addEventListener('mouseleave', () => { $('seekTip').style.display = 'none'; });
+
+  $('playBtn').onclick = toggle;
+  $('prevBtn').onclick = () => step(-1);
+  $('nextBtn').onclick = () => step(1);
+  $('muteBtn').onclick = () => { video.muted = !video.muted; };
+  $('volume').oninput = e => { video.volume = Number(e.target.value); video.muted = false; };
+  $('speed').onchange = e => { setSpeed(Number(e.target.value)); e.target.blur(); };
+  $('loopBtn').onclick = toggleLoop;
+  $('ccBtn').onclick = toggleSubs;
+  $('pipBtn').onclick = togglePip;
+  $('fsBtn').onclick = toggleFullscreen;
+
+  $('openBtn').onclick = () => $('fileInput').click();
+  $('subBtn').onclick = () => $('subInput').click();
+  $('fileInput').onchange = e => { loadFiles(e.target.files); e.target.value = ''; };
+  $('subInput').onchange = e => { if (e.target.files[0]) loadSubtitle(e.target.files[0]); e.target.value = ''; };
+  $('urlForm').onsubmit = e => {
+    e.preventDefault();
+    const url = $('urlInput').value.trim();
+    if (!url) return;
+    let name = url;
+    try { name = decodeURIComponent(new URL(url).pathname.split('/').pop()) || url; } catch {}
+    addItems([{ name, url, isBlob: false }]);
+    playIndex(items.length - 1);
+    $('urlInput').value = '';
+    stage.focus();
+  };
+  $('listBtn').onclick = () => {
+    const closed = $('side').classList.toggle('closed');
+    $('listBtn').setAttribute('aria-pressed', String(!closed));
+  };
+
+  stage.addEventListener('mousemove', wakeUi);
+  stage.addEventListener('touchstart', wakeUi, { passive: true });
+
+  // 끌어다 놓기 (창 전체)
+  let dragDepth = 0;
+  addEventListener('dragenter', e => { e.preventDefault(); dragDepth++; stage.classList.add('dragover'); });
+  addEventListener('dragover', e => e.preventDefault());
+  addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; stage.classList.remove('dragover'); } });
+  addEventListener('drop', e => {
+    e.preventDefault(); dragDepth = 0; stage.classList.remove('dragover');
+    if (e.dataTransfer?.files.length) loadFiles(e.dataTransfer.files);
+  });
+
+  // 단축키
+  addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const tag = e.target.tagName;
+    if (tag === 'INPUT' && e.target.type !== 'range' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    const k = e.key;
+    let handled = true;
+    if (k === ' ' || k === 'k' || k === 'K') { if (tag === 'BUTTON' && k === ' ') return; toggle(); }
+    else if (e.shiftKey && (k === 'N' || k === 'n')) step(1);
+    else if (e.shiftKey && (k === 'P' || k === 'p')) step(-1);
+    else if (k === 'ArrowLeft') skip(-5);
+    else if (k === 'ArrowRight') skip(5);
+    else if (k === 'j' || k === 'J') skip(-10);
+    else if (k === ';') skip(10);
+    else if (k === 'ArrowUp') setVolume(video.volume + 0.05);
+    else if (k === 'ArrowDown') setVolume(video.volume - 0.05);
+    else if (k === 'm' || k === 'M') video.muted = !video.muted;
+    else if (k === 'f' || k === 'F') toggleFullscreen();
+    else if (k === 'i' || k === 'I') togglePip();
+    else if (k === 'l' || k === 'L') toggleLoop();
+    else if (k === 'c' || k === 'C') toggleSubs();
+    else if (k === '[') stepSpeed(-1);
+    else if (k === ']') stepSpeed(1);
+    else if (k === ',' && video.paused) video.currentTime = Math.max(video.currentTime - 1 / 30, 0);
+    else if (k === '.' && video.paused) video.currentTime += 1 / 30;
+    else if (/^[0-9]$/.test(k) && hasDur()) seekTo(dur() * Number(k) / 10);
+    else handled = false;
+    if (handled) { e.preventDefault(); wakeUi(); }
+  });
+
+  // 저장된 설정 복원
+  video.volume = store.get('volume', 1);
+  video.muted = store.get('muted', false);
+  const sp = store.get('speed', 1);
+  if (SPEEDS.includes(sp)) $('speed').value = String(sp);
+  updateVolumeUi();
+  renderList();
+
+  // 설치형 앱: 파일을 더블클릭해서 열었을 때 전달되는 경로를 받는다.
+  function openNative(files) {
+    if (!files.length) return;
+    const first = items.length;
+    items.push(...files.map(f => ({ ...f, isBlob: false, sub: f.sub || undefined })));
+    playIndex(first);
+  }
+  if (window.native) {
+    window.native.onOpenFiles(openNative);
+    window.native.initialFiles().then(openNative);
+  }
+
+  // 테스트용 진입점
+  window.player = { loadFiles, items, video, cur, dur, seekTo, isStream: () => Boolean(tc) };
+})();
+</script>
+</body>
+</html>
