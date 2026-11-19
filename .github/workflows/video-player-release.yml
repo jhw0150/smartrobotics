@@ -47,6 +47,9 @@ jobs:
           Copy-Item ffmpeg-tmp/*/LICENSE.txt vendor/ffmpeg/
           Remove-Item -Recurse -Force ffmpeg.zip, ffmpeg-tmp
 
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
       - name: Build installer
         run: npm run dist
 
