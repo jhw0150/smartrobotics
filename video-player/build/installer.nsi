@@ -76,7 +76,7 @@ InstallDirRegKey HKCU "Software\${APP_ID}" "InstallDir"
 
 Section "Install"
   SetOutPath "$INSTDIR"
-  File /r "${APP_DIR}/*.*"
+  File /r "${APP_GLOB}"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "Software\${APP_ID}" "InstallDir" "$INSTDIR"
 

@@ -28,8 +28,18 @@ function findCached() {
   return null;
 }
 
-const cached = findCached();
-const bin = cached ? cached.bin : 'makensis';
+// Windows에 NSIS가 설치돼 있으면(GitHub Actions 러너 포함) 그것을 쓴다.
+function findInstalled() {
+  if (process.platform !== 'win32') return null;
+  for (const base of [process.env['ProgramFiles(x86)'], process.env.ProgramFiles]) {
+    const bin = base && path.join(base, 'NSIS', 'makensis.exe');
+    if (bin && fs.existsSync(bin)) return bin;
+  }
+  return null;
+}
+
+const cached = findInstalled() ? null : findCached();
+const bin = findInstalled() || (cached ? cached.bin : 'makensis');
 const env = { ...process.env };
 if (cached) env.NSISDIR = cached.nsisDir;
 
@@ -37,7 +47,7 @@ const D = process.platform === 'win32' ? '/D' : '-D';
 const flag = f => (process.platform === 'win32' ? '/' : '-') + f;
 const r = spawnSync(bin, [
   flag('V2'), flag('INPUTCHARSET'), 'UTF8',
-  `${D}APP_DIR=${appDir}`, `${D}OUT_FILE=${outFile}`, `${D}APP_VERSION=${version}`,
+  `${D}APP_GLOB=${path.join(appDir, '*.*')}`, `${D}OUT_FILE=${outFile}`, `${D}APP_VERSION=${version}`,
   path.join(__dirname, 'installer.nsi'),
 ], { stdio: 'inherit', env });
 
