@@ -1,7 +1,7 @@
 {
   "name": "smartrobotics-video-player",
   "productName": "SmartVideoPlayer",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "동영상 파일을 여는 간단한 플레이어",
   "author": "smartrobotics",
   "license": "MIT",

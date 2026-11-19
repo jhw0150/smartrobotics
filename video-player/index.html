@@ -214,8 +214,12 @@
   let seeking = false;
   let subsOn = true, loopOn = false;
   // 변환 재생(FFmpeg 스트림) 상태. 스트림은 탐색 위치부터 새로 시작하므로 offset을 더해 실제 시간을 구한다.
-  /** @type {{base:string, duration:number, offset:number}|null} */
+  /** @type {{base:string, duration:number, offset:number, mode:string}|null} */
   let tc = null;
+  // 재생 단계: 0 직접, 1 음성만 변환, 2 그래픽카드 인코딩, 3 CPU 인코딩
+  const MODES = [null, 'copy', 'hw', 'soft'];
+  const LEVEL_NAMES = ['직접 재생', '음성만 변환', '그래픽카드 변환', 'CPU 변환'];
+  const streamUrl = t => `${tc.base}?mode=${tc.mode}&ss=${t.toFixed(2)}`;
   const cur = () => tc ? tc.offset + video.currentTime : video.currentTime;
   const dur = () => tc ? tc.duration : video.duration;
   const hasDur = () => isFinite(dur()) && dur() > 0;
@@ -226,7 +230,7 @@
     if (!tc) { video.currentTime = t; return; }
     const wasPaused = video.paused && !video.ended;
     tc.offset = Math.min(t, Math.max(tc.duration - 0.5, 0));
-    video.src = tc.base + '?ss=' + tc.offset.toFixed(2);
+    video.src = streamUrl(tc.offset);
     video.playbackRate = Number($('speed').value);
     const it = items[current];
     if (it && it.sub) applySubtitle(it.sub.name, it.sub.text, false);
@@ -286,9 +290,9 @@
     current = i;
     const it = items[i];
     clearSubtitles();
-    tc = it.stream ? { base: it.streamBase, duration: it.duration, offset: 0 } : null;
+    tc = it.level > 0 ? { base: it.streamBase, duration: it.duration, offset: 0, mode: MODES[it.level] } : null;
     video.loop = loopOn && !tc;
-    video.src = tc ? tc.base + '?ss=0' : it.url;
+    video.src = tc ? streamUrl(0) : it.url;
     video.playbackRate = Number($('speed').value);
     if (!it.sub && it.hasTextSub && !it.subAsked && window.native) {
       it.subAsked = true;
@@ -487,13 +491,27 @@
   });
   video.addEventListener('error', () => {
     if (current < 0 || !video.error) return;
-    const it = items[current];
-    if (it.canStream && !it.stream) {
-      // 내장 엔진이 못 여는 코덱이면 FFmpeg 변환 재생으로 넘어간다.
-      it.stream = true;
-      playIndex(current);
-    } else toast('이 파일은 재생할 수 없습니다 (지원하지 않는 형식)');
+    nextLevel();
   });
+  // 영상이 있는 파일인데 화면 없이 소리만 나오면(코덱 미지원) 실패로 본다.
+  video.addEventListener('loadedmetadata', () => {
+    const it = items[current];
+    if (it && it.hasVideo && video.videoWidth === 0) nextLevel();
+  });
+
+  // 지금 단계로 재생이 안 되면 더 무거운 변환 단계로 넘어간다.
+  function nextLevel() {
+    const it = items[current];
+    if (!it || !it.canStream || it.level >= 3) {
+      toast('이 파일은 재생할 수 없습니다 (지원하지 않는 형식)');
+      return;
+    }
+    const at = tc ? tc.offset : (isFinite(video.currentTime) ? video.currentTime : 0);
+    it.level = it.level === 0 && it.canCopy ? 1 : Math.max(it.level + 1, 2);
+    playIndex(current);
+    if (at > 1) seekTo(at);
+    toast(LEVEL_NAMES[it.level]);
+  }
   video.addEventListener('click', toggle);
   video.addEventListener('dblclick', toggleFullscreen);
 
@@ -603,7 +621,7 @@
   function openNative(files) {
     if (!files.length) return;
     const first = items.length;
-    items.push(...files.map(f => ({ ...f, isBlob: false, sub: f.sub || undefined })));
+    items.push(...files.map(f => ({ ...f, level: f.level || 0, isBlob: false, sub: f.sub || undefined })));
     playIndex(first);
   }
   if (window.native) {
@@ -612,7 +630,7 @@
   }
 
   // 테스트용 진입점
-  window.player = { loadFiles, items, video, cur, dur, seekTo, isStream: () => Boolean(tc) };
+  window.player = { loadFiles, items, video, cur, dur, seekTo, isStream: () => Boolean(tc), level: () => (items[current] ? items[current].level : -1) };
 })();
 </script>
 </body>
