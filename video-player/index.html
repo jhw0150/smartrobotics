@@ -66,6 +66,11 @@
     opacity: 0; transition: opacity .2s; pointer-events: none; white-space: nowrap;
   }
   #toast.show { opacity: 1; }
+  #info {
+    position: absolute; top: 10px; left: 10px; margin: 0; padding: 8px 10px; border-radius: 6px;
+    background: rgba(0,0,0,.75); font: 12px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap;
+    pointer-events: none; max-width: calc(100% - 20px);
+  }
 
   #controls {
     position: absolute; left: 0; right: 0; bottom: 0; padding: 26px 12px 8px;
@@ -155,6 +160,7 @@
       <span>또는 위의 "파일 열기"를 누르세요. 자막(.srt, .vtt)도 함께 놓을 수 있습니다.</span>
     </div>
     <div id="toast" role="status"></div>
+    <pre id="info" hidden></pre>
 
     <div id="controls">
       <div id="seekWrap">
@@ -190,7 +196,7 @@
     <div id="help">
       <kbd>Space</kbd> 재생/정지 · <kbd>←</kbd><kbd>→</kbd> 5초 · <kbd>J</kbd><kbd>;</kbd> 10초<br>
       <kbd>↑</kbd><kbd>↓</kbd> 음량 · <kbd>M</kbd> 음소거 · <kbd>F</kbd> 전체 화면<br>
-      <kbd>[</kbd><kbd>]</kbd> 속도 · <kbd>0</kbd>–<kbd>9</kbd> 위치 이동 · <kbd>,</kbd><kbd>.</kbd> 프레임
+      <kbd>[</kbd><kbd>]</kbd> 속도 · <kbd>0</kbd>–<kbd>9</kbd> 위치 이동 · <kbd>,</kbd><kbd>.</kbd> 프레임 · <kbd>D</kbd> 재생 정보
     </div>
   </aside>
 </main>
@@ -216,9 +222,10 @@
   // 변환 재생(FFmpeg 스트림) 상태. 스트림은 탐색 위치부터 새로 시작하므로 offset을 더해 실제 시간을 구한다.
   /** @type {{base:string, duration:number, offset:number, mode:string}|null} */
   let tc = null;
-  // 재생 단계: 0 직접, 1 음성만 변환, 2 그래픽카드 인코딩, 3 CPU 인코딩
-  const MODES = [null, 'copy', 'hw', 'soft'];
-  const LEVEL_NAMES = ['직접 재생', '음성만 변환', '그래픽카드 변환', 'CPU 변환'];
+  // 재생 단계: 0 직접, 1 음성만 변환, 2 그래픽카드 인코딩, 3 CPU 인코딩, 4 CPU 저화질(720p)
+  const MODES = [null, 'copy', 'hw', 'soft', 'lite'];
+  const LEVEL_NAMES = ['직접 재생', '음성만 변환', '그래픽카드 변환', 'CPU 변환', 'CPU 저화질 변환 (720p)'];
+  const MAX_LEVEL = 4;
   const streamUrl = t => `${tc.base}?mode=${tc.mode}&ss=${t.toFixed(2)}`;
   const cur = () => tc ? tc.offset + video.currentTime : video.currentTime;
   const dur = () => tc ? tc.duration : video.duration;
@@ -251,12 +258,12 @@
     return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
   }
 
-  function toast(msg) {
+  function toast(msg, ms = 1200) {
     const el = $('toast');
     el.textContent = msg;
     el.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('show'), 1200);
+    toastTimer = setTimeout(() => el.classList.remove('show'), ms);
   }
 
   // ---------- 재생목록 ----------
@@ -288,6 +295,7 @@
   function playIndex(i) {
     if (i < 0 || i >= items.length) return;
     current = i;
+    resetWatch();
     const it = items[i];
     clearSubtitles();
     tc = it.level > 0 ? { base: it.streamBase, duration: it.duration, offset: 0, mode: MODES[it.level] } : null;
@@ -499,18 +507,74 @@
     if (it && it.hasVideo && video.videoWidth === 0) nextLevel();
   });
 
-  // 지금 단계로 재생이 안 되면 더 무거운 변환 단계로 넘어간다.
+  // 지금 단계로 재생이 안 되면 다음 변환 단계로 넘어간다.
   function nextLevel() {
     const it = items[current];
-    if (!it || !it.canStream || it.level >= 3) {
+    if (!it || !it.canStream || it.level >= MAX_LEVEL) {
       toast('이 파일은 재생할 수 없습니다 (지원하지 않는 형식)');
       return;
     }
-    const at = tc ? tc.offset : (isFinite(video.currentTime) ? video.currentTime : 0);
-    it.level = it.level === 0 && it.canCopy ? 1 : Math.max(it.level + 1, 2);
+    goLevel(it.level === 0 && it.canCopy ? 1 : Math.max(it.level + 1, 2));
+  }
+
+  function goLevel(level) {
+    const it = items[current];
+    const at = isFinite(cur()) ? cur() : 0;
+    it.level = level;
+    resetWatch();
     playIndex(current);
     if (at > 1) seekTo(at);
-    toast(LEVEL_NAMES[it.level]);
+    toast(LEVEL_NAMES[level], 2500);
+  }
+
+  // ---------- 끊김 감시 ----------
+  // 재생 중에 화면이 계속 밀리면(프레임 누락, 버퍼 고갈) 더 가벼운 단계로 자동 전환한다.
+  let dropBad = 0, starve = 0, lastDropped = 0, lastTotal = 0, lastStat = null, dropPct = 0;
+  function resetWatch() {
+    dropBad = 0; starve = 0;
+    const q = video.getVideoPlaybackQuality();
+    lastDropped = q.droppedVideoFrames; lastTotal = q.totalVideoFrames;
+  }
+  setInterval(async () => {
+    const it = items[current];
+    if (!it) return;
+    if (tc && window.native) lastStat = await window.native.streamStat(it.id); else lastStat = null;
+    const playing = !video.paused && !video.ended && !seeking && video.playbackRate <= 1;
+    const q = video.getVideoPlaybackQuality();
+    const dDrop = q.droppedVideoFrames - lastDropped, dTotal = q.totalVideoFrames - lastTotal;
+    lastDropped = q.droppedVideoFrames; lastTotal = q.totalVideoFrames;
+    if (dTotal < 0) { resetWatch(); return; } // 영상이 바뀌어 카운터가 초기화됨
+    dropPct = dTotal > 0 ? dDrop / dTotal * 100 : 0;
+    if (playing && it.canStream && it.level < MAX_LEVEL) {
+      // 풀기(디코딩)가 못 따라가는 경우: 1초 동안 프레임의 1/4 이상이 버려짐
+      if (dTotal >= 10 && dDrop / dTotal > 0.25) dropBad++; else dropBad = Math.max(dropBad - 1, 0);
+      // 변환이 못 따라가는 경우: 재생할 데이터가 바닥남
+      if (tc && it.level >= 2 && video.readyState < 3 && video.currentTime > 0.5) starve++;
+      else starve = Math.max(starve - 0.25, 0);
+      if (dropBad >= 5) goLevel(it.level < 2 ? 2 : MAX_LEVEL);
+      else if (starve >= 5) goLevel(it.level + 1);
+    }
+    updateInfo();
+  }, 1000);
+
+  function updateInfo() {
+    const el = $('info');
+    if (el.hidden) return;
+    const it = items[current];
+    if (!it) { el.textContent = '열린 파일 없음'; return; }
+    const f = it.info || {};
+    const q = video.getVideoPlaybackQuality();
+    const lines = [
+      `파일: ${f.video || '?'} ${f.width || '?'}x${f.height || '?'} ${f.fps || '?'}fps ${f.pixfmt || ''} / 음성 ${f.audio || '없음'}`,
+      `재생 단계: ${it.level} ${LEVEL_NAMES[it.level]}`,
+      `화면: ${video.videoWidth}x${video.videoHeight}, 누락 프레임 ${q.droppedVideoFrames}/${q.totalVideoFrames} (최근 ${dropPct.toFixed(0)}%)`,
+    ];
+    if (lastStat) lines.push(`변환: ${lastStat.encoder}, 속도 ${lastStat.speed}x, ${lastStat.fps}fps`);
+    el.textContent = lines.join('\n');
+  }
+  function toggleInfo() {
+    $('info').hidden = !$('info').hidden;
+    updateInfo();
   }
   video.addEventListener('click', toggle);
   video.addEventListener('dblclick', toggleFullscreen);
@@ -600,6 +664,7 @@
     else if (k === 'i' || k === 'I') togglePip();
     else if (k === 'l' || k === 'L') toggleLoop();
     else if (k === 'c' || k === 'C') toggleSubs();
+    else if (k === 'd' || k === 'D') toggleInfo();
     else if (k === '[') stepSpeed(-1);
     else if (k === ']') stepSpeed(1);
     else if (k === ',' && video.paused) video.currentTime = Math.max(video.currentTime - 1 / 30, 0);
@@ -630,7 +695,7 @@
   }
 
   // 테스트용 진입점
-  window.player = { loadFiles, items, video, cur, dur, seekTo, isStream: () => Boolean(tc), level: () => (items[current] ? items[current].level : -1) };
+  window.player = { loadFiles, items, video, cur, dur, seekTo, isStream: () => Boolean(tc), level: () => (items[current] ? items[current].level : -1), goLevel };
 })();
 </script>
 </body>

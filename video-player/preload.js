@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('native', {
   onOpenFiles: cb => ipcRenderer.on('open-files', (_e, files) => cb(files)),
   pathFor: file => webUtils.getPathForFile(file),
   describe: paths => ipcRenderer.invoke('describe', paths),
+  streamStat: id => ipcRenderer.invoke('stream-stat', id),
   hwEncoder: () => ipcRenderer.invoke('hw-encoder'),
   embeddedSub: id => ipcRenderer.invoke('embedded-sub', id),
 });

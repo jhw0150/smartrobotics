@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const http = require('http');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
@@ -52,7 +53,7 @@ function findSubtitle(file) {
 // `ffmpeg -i`의 출력에서 길이와 스트림 코덱을 읽는다 (ffprobe를 따로 싣지 않기 위함).
 function probe(file) {
   return new Promise(resolve => {
-    const info = { ok: false, duration: 0, video: null, pixfmt: '', audio: null, textSub: false };
+    const info = { ok: false, duration: 0, video: null, pixfmt: '', width: 0, height: 0, fps: 0, audio: null, textSub: false };
     let err = '';
     let p;
     try {
@@ -69,6 +70,9 @@ function probe(file) {
         if (m[1] === 'Video' && !info.video && !/attached pic/.test(line)) {
           info.video = m[2];
           info.pixfmt = (/, (yuv\w+|gbr\w+|nv\w+|p0\w+)/.exec(m[3]) || [])[1] || '';
+          const size = /, (\d{2,5})x(\d{2,5})/.exec(m[3]);
+          if (size) { info.width = Number(size[1]); info.height = Number(size[2]); }
+          info.fps = Number((/([\d.]+) fps/.exec(m[3]) || [])[1]) || 0;
         } else if (m[1] === 'Audio' && !info.audio) info.audio = m[2];
         else if (m[1] === 'Subtitle' && TEXT_SUBS.has(m[2])) info.textSub = true;
       }
@@ -82,7 +86,8 @@ function probe(file) {
 const canCopyVideo = info =>
   (info.video === 'h264' && /^yuvj?420p$/.test(info.pixfmt)) || info.video === 'hevc';
 
-// 재생 단계: 0 직접 재생, 1 영상 그대로 + 음성만 변환, 2 그래픽카드 인코딩, 3 CPU 인코딩.
+// 재생 단계: 0 직접 재생, 1 영상 그대로 + 음성만 변환, 2 그래픽카드 인코딩, 3 CPU 인코딩,
+// 4 CPU 저화질(720p, 30fps) 인코딩.
 // 화면 쪽에서 재생에 실패하면 한 단계씩 올린다.
 function startLevel(file, info) {
   if (!info.ok) return 0; // FFmpeg도 못 읽으면 변환할 방법이 없으니 그대로 시도한다.
@@ -132,6 +137,7 @@ async function describe(file) {
     canStream: info.ok,
     canCopy: Boolean(info.video) && canCopyVideo(info),
     hasVideo: Boolean(info.video),
+    info: { video: info.video, pixfmt: info.pixfmt, width: info.width, height: info.height, fps: info.fps, audio: info.audio },
     duration: info.duration,
     hasTextSub: info.textSub,
     sub: findSubtitle(file),
@@ -161,8 +167,11 @@ function startServer() {
       const ss = Math.max(Number(u.searchParams.get('ss')) || 0, 0);
       const { file, info } = entry;
       const mode = u.searchParams.get('mode');
-      const args = ['-hide_banner', '-loglevel', 'error'];
+      const args = ['-hide_banner', '-loglevel', 'error', '-nostats', '-progress', 'pipe:2'];
       if (mode !== 'copy') args.push('-hwaccel', 'auto'); // 풀기(디코딩)도 가능하면 그래픽카드로
+      // 처음 20초 분량만 빠르게 만들고 그 뒤로는 재생 속도의 2배까지만 변환한다.
+      // 제한이 없으면 변환이 CPU를 독점해서 정작 재생 화면이 버벅거린다.
+      args.push('-readrate', '2', '-readrate_initial_burst', '20');
       args.push('-ss', String(ss), '-i', file, '-map', '0:v:0?', '-map', '0:a:0?', '-sn', '-dn');
       const hw = mode === 'hw' ? await detectHwEncoder() : null;
       if (mode === 'copy' && canCopyVideo(info)) {
@@ -170,6 +179,11 @@ function startServer() {
         if (info.video === 'hevc') args.push('-tag:v', 'hvc1');
       } else if (hw) {
         args.push(...HW_ENCODERS[hw], '-g', '60', '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2');
+      } else if (mode === 'lite') {
+        // 사양이 낮은 PC용: 720p, 30fps, 가장 빠른 설정.
+        args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '26',
+          '-pix_fmt', 'yuv420p', '-g', '60',
+          '-vf', "scale='min(1280,trunc(iw/2)*2)':-2,fps='min(30,source_fps)'");
       } else {
         // CPU 인코딩은 끊기지 않도록 가장 가벼운 설정을 쓰고, 4K는 1080p로 줄인다.
         args.push('-c:v', 'libx264', '-preset', 'superfast', '-tune', 'zerolatency', '-crf', '23',
@@ -178,7 +192,18 @@ function startServer() {
       }
       args.push('-c:a', 'aac', '-b:a', '192k', '-ac', '2',
         '-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', 'pipe:1');
-      const ff = spawn(FFMPEG, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+      const ff = spawn(FFMPEG, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      // 변환보다 재생 화면이 CPU를 먼저 쓰도록 우선순위를 낮춘다.
+      try { os.setPriority(ff.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch {}
+      const stat = { mode, encoder: mode === 'copy' ? 'copy' : (hw || 'libx264'), speed: 0, fps: 0 };
+      entry.stat = stat;
+      ff.stderr.on('data', d => {
+        const text = String(d);
+        const sp = /speed=\s*([\d.]+)x/.exec(text);
+        const fp = /fps=\s*([\d.]+)/.exec(text);
+        if (sp) stat.speed = Number(sp[1]);
+        if (fp) stat.fps = Number(fp[1]);
+      });
       res.writeHead(200, { 'Content-Type': 'video/mp4', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
       ff.stdout.pipe(res);
       ff.on('error', () => res.destroy());
@@ -245,6 +270,7 @@ if (!app.requestSingleInstanceLock()) {
   });
   ipcMain.handle('describe', (_e, paths) => describeAll(Array.isArray(paths) ? paths : []));
   ipcMain.handle('hw-encoder', () => detectHwEncoder());
+  ipcMain.handle('stream-stat', (_e, id) => (registry.get(Number(id)) || {}).stat || null);
   ipcMain.handle('embedded-sub', (_e, id) => embeddedSubtitle(Number(id)));
 
   app.whenReady().then(async () => {
