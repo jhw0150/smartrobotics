@@ -1,4 +1,1 @@
-node_modules/
 dist/
-# ffmpeg.exe (172MB) is too large for git; download a Windows build into vendor/ffmpeg/ before packaging
-vendor/

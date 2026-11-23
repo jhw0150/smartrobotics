@@ -72,9 +72,23 @@ InstallDirRegKey HKCU "Software\${APP_ID}" "InstallDir"
   !insertmacro ${MACRO} "divx"
   !insertmacro ${MACRO} "ogv"
   !insertmacro ${MACRO} "ogm"
+  !insertmacro ${MACRO} "mxf"
+  !insertmacro ${MACRO} "m2v"
+  !insertmacro ${MACRO} "tp"
 !macroend
 
 Section "Install"
+  ; 1.x(Electron 기반) 위에 설치하는 경우 더 이상 쓰지 않는 파일을 지운다.
+  IfFileExists "$INSTDIR\resources\app.asar" 0 +9
+    RMDir /r "$INSTDIR\resources"
+    RMDir /r "$INSTDIR\locales"
+    Delete "$INSTDIR\*.pak"
+    Delete "$INSTDIR\*.dll"
+    Delete "$INSTDIR\*.bin"
+    Delete "$INSTDIR\*.dat"
+    Delete "$INSTDIR\*.json"
+    Delete "$INSTDIR\LICENSE*"
+
   SetOutPath "$INSTDIR"
   File /r "${APP_GLOB}"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
@@ -92,7 +106,7 @@ Section "Install"
 
   ; Windows 설정의 "기본 앱" 목록에 나타나게 한다.
   WriteRegStr HKCU "${CAP_KEY}" "ApplicationName" "${APP_NAME}"
-  WriteRegStr HKCU "${CAP_KEY}" "ApplicationDescription" "모든 형식을 재생하는 동영상 플레이어"
+  WriteRegStr HKCU "${CAP_KEY}" "ApplicationDescription" "모든 형식을 재생하는 가벼운 동영상 플레이어"
   WriteRegStr HKCU "Software\RegisteredApplications" "${APP_ID}" "${CAP_KEY}"
 
   !insertmacro ForEachExt Assoc
@@ -124,7 +138,12 @@ Section "Uninstall"
 
   Delete "$SMPROGRAMS\${APP_NAME}.lnk"
   Delete "$DESKTOP\${APP_NAME}.lnk"
-  RMDir /r "$INSTDIR"
+  ; 설치 폴더에 사용자가 둔 다른 파일이 있을 수 있으므로 설치한 것만 지운다.
+  Delete "$INSTDIR\${APP_EXE}"
+  Delete "$INSTDIR\*.dll"
+  Delete "$INSTDIR\Uninstall.exe"
+  RMDir /r "$INSTDIR\portable_config"
+  RMDir "$INSTDIR"
 
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
 SectionEnd

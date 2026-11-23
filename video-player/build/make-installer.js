@@ -1,4 +1,4 @@
-// dist/win-unpacked 폴더를 NSIS 설치 파일 하나로 묶는다.
+// dist/app 폴더를 NSIS 설치 파일 하나로 묶는다. (먼저 build/fetch-deps.sh 실행)
 // makensis는 PATH에서 찾고, 없으면 electron-builder가 내려받아 둔 것을 쓴다.
 const { spawnSync } = require('child_process');
 const fs = require('fs');
@@ -6,12 +6,12 @@ const os = require('os');
 const path = require('path');
 
 const root = path.join(__dirname, '..');
-const { version } = require(path.join(root, 'package.json'));
-const appDir = path.join(root, 'dist', 'win-unpacked');
+const version = fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim();
+const appDir = path.join(root, 'dist', 'app');
 const outFile = path.join(root, 'dist', `VideoPlayer-Setup-${version}.exe`);
 
 if (!fs.existsSync(path.join(appDir, 'SmartVideoPlayer.exe'))) {
-  console.error('dist/win-unpacked 가 없습니다. 먼저 "npm run pack"을 실행하세요.');
+  console.error('dist/app 이 없습니다. 먼저 build/fetch-deps.sh 를 실행하세요.');
   process.exit(1);
 }
 
