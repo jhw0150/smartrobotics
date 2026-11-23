@@ -29,7 +29,8 @@ Check ((RegValue 'Software\Microsoft\Windows\CurrentVersion\Uninstall\SmartVideo
 Write-Host "== 설치된 플레이어로 재생"
 $clip = "$root\dist\smoke\hevc_ac3.mkv"
 $p = Start-Process -FilePath $exe -Wait -PassThru -ArgumentList @("`"$clip`"", '--vo=null', '--ao=null',
-  '--force-window=no', '--idle=no', '--keep-open=no', '--save-position-on-quit=no', '--hwdec=no')
+  '--force-window=no', '--idle=no', '--keep-open=no', '--save-position-on-quit=no', '--hwdec=no',
+  '--script-opts=uosc-autoload=no')
 Check ($p.ExitCode -eq 0) "HEVC+AC3 영상 재생 후 정상 종료"
 
 Write-Host "== 제거"

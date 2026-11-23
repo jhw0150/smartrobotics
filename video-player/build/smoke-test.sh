@@ -14,7 +14,9 @@ mkdir -p "$OUT"
 fail=0
 
 # 화면과 소리 장치가 없는 러너에서도 돌도록 출력만 끈다. 디코딩은 실제로 수행된다.
-HEADLESS=(--vo=null --ao=null --force-window=no --idle=no --keep-open=no --save-position-on-quit=no --hwdec=no)
+# uosc의 autoload는 재생이 끝나도 창을 열어 두므로(keep-open) 시험에서는 끈다.
+HEADLESS=(--vo=null --ao=null --force-window=no --idle=no --keep-open=no --save-position-on-quit=no --hwdec=no
+  --script-opts=uosc-autoload=no)
 
 echo "== 1. 설정과 스크립트 읽기"
 run 60 --config-dir="$CONF" "${HEADLESS[@]}" --log-file="$OUT/config.log" --msg-level=all=warn \
@@ -58,7 +60,11 @@ done
 
 echo "== 3. CP949 한글 자막"
 printf '1\n00:00:00,000 --> 00:00:02,000\n\xc7\xd1\xb1\xdb \xc0\xda\xb8\xb7\n' > "$OUT/h264_aac.srt"
-run 60 --config-dir="$CONF" "${HEADLESS[@]}" --msg-level=all=warn,sub=v "$OUT/h264_aac.mp4" > "$OUT/sub.play" 2>&1
-if grep -Ei 'error|failed|invalid' "$OUT/sub.play"; then echo "FAIL 자막"; fail=1; else echo "OK   자막 파일 자동 로드"; fi
+run 60 --config-dir="$CONF" "${HEADLESS[@]}" --msg-level=all=warn,cplayer=v "$OUT/h264_aac.mp4" > "$OUT/sub.play" 2>&1
+code=$?
+cat "$OUT/sub.play"
+if [ $code -ne 0 ] || grep -Ei 'error|failed|invalid' "$OUT/sub.play" > /dev/null; then echo "FAIL 자막 (종료 코드 $code)"; fail=1
+elif ! grep -q 'h264_aac.srt' "$OUT/sub.play"; then echo "FAIL 자막 파일이 로드되지 않음"; fail=1
+else echo "OK   자막 파일 자동 로드"; fi
 
 exit $fail
