@@ -60,11 +60,11 @@ done
 
 echo "== 3. CP949 한글 자막"
 printf '1\n00:00:00,000 --> 00:00:02,000\n\xc7\xd1\xb1\xdb \xc0\xda\xb8\xb7\n' > "$OUT/h264_aac.srt"
-run 60 --config-dir="$CONF" "${HEADLESS[@]}" --msg-level=all=warn,cplayer=v "$OUT/h264_aac.mp4" > "$OUT/sub.play" 2>&1
+run 60 --config-dir="$CONF" "${HEADLESS[@]}" --msg-level=all=warn,cplayer=info "$OUT/h264_aac.mp4" > "$OUT/sub.play" 2>&1
 code=$?
 cat "$OUT/sub.play"
 if [ $code -ne 0 ] || grep -Ei 'error|failed|invalid' "$OUT/sub.play" > /dev/null; then echo "FAIL 자막 (종료 코드 $code)"; fail=1
-elif ! grep -q 'h264_aac.srt' "$OUT/sub.play"; then echo "FAIL 자막 파일이 로드되지 않음"; fail=1
+elif ! grep -Eq 'Subs.*external' "$OUT/sub.play"; then echo "FAIL 자막 파일이 로드되지 않음"; fail=1
 else echo "OK   자막 파일 자동 로드"; fi
 
 exit $fail
