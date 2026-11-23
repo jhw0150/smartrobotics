@@ -6,6 +6,8 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 MPV=dist/mpv/mpv.com          # 콘솔 출력이 되는 실행 파일 (엔진은 dist/app 것과 같다)
+# 멈춘 경우에도 시험이 끝나도록 실행마다 제한 시간을 둔다 (종료 코드 124 = 시간 초과).
+run() { timeout -k 5 "$1" "$MPV" "${@:2}" < /dev/null; }
 CONF=dist/app/portable_config
 OUT=dist/smoke
 mkdir -p "$OUT"
@@ -15,11 +17,11 @@ fail=0
 HEADLESS=(--vo=null --ao=null --force-window=no --idle=no --keep-open=no --save-position-on-quit=no --hwdec=no)
 
 echo "== 1. 설정과 스크립트 읽기"
-"$MPV" --config-dir="$CONF" "${HEADLESS[@]}" --log-file="$OUT/config.log" --msg-level=all=warn \
+run 60 --config-dir="$CONF" "${HEADLESS[@]}" --log-file="$OUT/config.log" --msg-level=all=warn \
   "av://lavfi:testsrc=duration=1:size=320x240:rate=30" > "$OUT/config.out" 2>&1
 code=$?
 cat "$OUT/config.out"
-if [ $code -ne 0 ]; then echo "FAIL: 종료 코드 $code"; fail=1; fi
+if [ $code -ne 0 ]; then echo "FAIL: 종료 코드 $code"; fail=1; echo "--- 로그 끝부분"; tail -40 "$OUT/config.log"; fi
 if grep -Ei 'error|unknown option|could not|failed|invalid' "$OUT/config.out"; then
   echo "FAIL: 설정 또는 스크립트 경고/오류"; fail=1
 fi
@@ -40,11 +42,12 @@ cases=(
 for c in "${cases[@]}"; do
   IFS='|' read -r name vc ac <<< "$c"
   f="$OUT/$name"
-  if ! "$MPV" --no-config "$SRC" --o="$f" --ovc="$vc" --oac="$ac" --msg-level=all=error > "$OUT/$name.enc" 2>&1 || [ ! -s "$f" ]; then
+  echo "-- $name"
+  if ! run 90 --no-config "$SRC" --o="$f" --ovc="$vc" --oac="$ac" --msg-level=all=error > "$OUT/$name.enc" 2>&1 || [ ! -s "$f" ]; then
     echo "SKIP $name (시험 영상을 만들지 못함)"; sed 's/^/    /' "$OUT/$name.enc" | head -5
     continue
   fi
-  "$MPV" --config-dir="$CONF" "${HEADLESS[@]}" --msg-level=all=warn "$f" > "$OUT/$name.play" 2>&1
+  run 60 --config-dir="$CONF" "${HEADLESS[@]}" --msg-level=all=warn "$f" > "$OUT/$name.play" 2>&1
   code=$?
   if [ $code -ne 0 ] || grep -Ei 'error|failed|could not' "$OUT/$name.play" > /dev/null; then
     echo "FAIL $name (종료 코드 $code)"; sed 's/^/    /' "$OUT/$name.play" | head -10; fail=1
@@ -55,7 +58,7 @@ done
 
 echo "== 3. CP949 한글 자막"
 printf '1\n00:00:00,000 --> 00:00:02,000\n\xc7\xd1\xb1\xdb \xc0\xda\xb8\xb7\n' > "$OUT/h264_aac.srt"
-"$MPV" --config-dir="$CONF" "${HEADLESS[@]}" --msg-level=all=warn,sub=v "$OUT/h264_aac.mp4" > "$OUT/sub.play" 2>&1
+run 60 --config-dir="$CONF" "${HEADLESS[@]}" --msg-level=all=warn,sub=v "$OUT/h264_aac.mp4" > "$OUT/sub.play" 2>&1
 if grep -Ei 'error|failed|invalid' "$OUT/sub.play"; then echo "FAIL 자막"; fail=1; else echo "OK   자막 파일 자동 로드"; fi
 
 exit $fail
