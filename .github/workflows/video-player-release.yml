@@ -34,6 +34,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash build/fetch-deps.sh
 
+      - name: Diagnose
+        shell: bash
+        run: bash build/diag.sh; exit 1
+
       - name: Smoke test (config, scripts, codecs)
         shell: bash
         run: bash build/smoke-test.sh
